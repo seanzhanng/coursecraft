@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: coursecraft-postgres
+    environment:
+      POSTGRES_USER: coursecraft
+      POSTGRES_PASSWORD: coursecraft
+      POSTGRES_DB: coursecraft
+    ports:
+      - "5432:5432"
+    volumes:
+      - coursecraft_pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coursecraft -d coursecraft"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  coursecraft_pgdata:

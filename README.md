@@ -1,2 +1,2 @@
 # coursecraft
-a course/class schedule builder for students
+a course/class schedule builder
