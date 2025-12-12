@@ -97,7 +97,7 @@ function HomePage() {
       </div>
       <p className="text-gray-700">
         Use the navigation above to move through the planner steps. The next page lets you review the course catalog and
-        later mark completed courses.
+        mark completed courses.
       </p>
     </main>
   );
@@ -105,13 +105,25 @@ function HomePage() {
 
 function CompletedCoursesPage() {
   const { data: courses, isLoading, isError } = useCourses();
+  const { state, setCompletedCourseCodes } = usePlanningContext();
+
+  const handleToggleCourse = (courseCode: string) => {
+    const current = state.completedCourseCodes;
+    if (current.includes(courseCode)) {
+      const updated = current.filter((code) => code !== courseCode);
+      setCompletedCourseCodes(updated);
+    } else {
+      const updated = [...current, courseCode];
+      setCompletedCourseCodes(updated);
+    }
+  };
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
       <h2 className="mb-4 text-xl font-semibold">Completed Courses</h2>
       <p className="mb-4 text-gray-700">
-        This page will show the course catalog and eventually allow you to mark which courses you have already
-        completed. For now, it lists the catalog from the backend.
+        Select the courses you have already completed. The degree planner will treat these as finished and only schedule
+        the remaining requirements.
       </p>
       {isLoading && <div className="text-gray-600">Loading courses.</div>}
       {isError && <div className="text-red-600">Failed to load courses.</div>}
@@ -119,26 +131,46 @@ function CompletedCoursesPage() {
         <div className="text-gray-600">No courses found.</div>
       )}
       {!isLoading && !isError && courses && courses.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border bg-white">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 font-medium text-gray-700">Code</th>
-                <th className="px-4 py-2 font-medium text-gray-700">Name</th>
-                <th className="px-4 py-2 font-medium text-gray-700">Credits</th>
-              </tr>
-            </thead>
-            <tbody>
-              {courses.map((course) => (
-                <tr key={course.code} className="border-b last:border-b-0">
-                  <td className="px-4 py-2 text-gray-900">{course.code}</td>
-                  <td className="px-4 py-2 text-gray-900">{course.name}</td>
-                  <td className="px-4 py-2 text-gray-900">{course.credits.toFixed(1)}</td>
+        <>
+          <div className="mb-3 text-sm text-gray-700">
+            Selected completed courses:{" "}
+            <span className="font-medium">
+              {state.completedCourseCodes.length}
+            </span>
+          </div>
+          <div className="overflow-x-auto rounded-lg border bg-white">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 font-medium text-gray-700">Completed</th>
+                  <th className="px-4 py-2 font-medium text-gray-700">Code</th>
+                  <th className="px-4 py-2 font-medium text-gray-700">Name</th>
+                  <th className="px-4 py-2 font-medium text-gray-700">Credits</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {courses.map((course) => {
+                  const checked = state.completedCourseCodes.includes(course.code);
+                  return (
+                    <tr key={course.code} className="border-b last:border-b-0">
+                      <td className="px-4 py-2">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => handleToggleCourse(course.code)}
+                          className="h-4 w-4"
+                        />
+                      </td>
+                      <td className="px-4 py-2 text-gray-900">{course.code}</td>
+                      <td className="px-4 py-2 text-gray-900">{course.name}</td>
+                      <td className="px-4 py-2 text-gray-900">{course.credits.toFixed(1)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </main>
   );
@@ -147,6 +179,7 @@ function CompletedCoursesPage() {
 function ConstraintsPage() {
   const { state, setLastDegreePlan } = usePlanningContext();
   const [allowedTermsInput, setAllowedTermsInput] = useState("2026-F, 2027-W, 2027-F, 2028-W");
+  const [targetGradTermInput, setTargetGradTermInput] = useState("");
   const [minCreditsInput, setMinCreditsInput] = useState("0.5");
   const [maxCreditsInput, setMaxCreditsInput] = useState("1.5");
   const [maxTermsInput, setMaxTermsInput] = useState("");
@@ -179,13 +212,16 @@ function ConstraintsPage() {
       return;
     }
 
+    const targetGradTerm =
+      targetGradTermInput.trim().length > 0 ? targetGradTermInput.trim() : null;
+
     setLocalError(null);
 
     degreePlanMutation.mutate(
       {
         program_id: state.selectedProgramId,
-        completed_courses: [],
-        target_grad_term: null,
+        completed_courses: state.completedCourseCodes,
+        target_grad_term: targetGradTerm,
         allowed_terms: allowedTerms,
         min_credits_per_term: minCredits,
         max_credits_per_term: maxCredits,
@@ -203,17 +239,21 @@ function ConstraintsPage() {
     <main className="mx-auto max-w-4xl px-4 py-8">
       <h2 className="mb-4 text-xl font-semibold">Planning Constraints</h2>
       <p className="mb-6 text-gray-700">
-        Configure allowed terms and load constraints. For now, completed courses are treated as empty; later this will
-        include your selections from the Completed Courses page.
+        Configure allowed terms and load constraints. Completed courses are taken from the Completed Courses page and
+        will not be scheduled again.
       </p>
       <div className="mb-4 rounded-lg border bg-white p-4">
-        <div className="mb-3 text-sm text-gray-700">
+        <div className="mb-2 text-sm text-gray-700">
           Selected program:{" "}
           {state.selectedProgramId ? (
             <span className="font-medium text-gray-900">{state.selectedProgramId}</span>
           ) : (
             <span className="text-red-600">none selected</span>
           )}
+        </div>
+        <div className="mb-4 text-sm text-gray-700">
+          Completed courses selected:{" "}
+          <span className="font-medium">{state.completedCourseCodes.length}</span>
         </div>
         <div className="mb-4 flex flex-col gap-4">
           <div className="flex flex-col gap-1">
@@ -227,6 +267,21 @@ function ConstraintsPage() {
             />
             <p className="text-xs text-gray-500">
               Comma-separated list of term identifiers such as 2026-F, 2027-W.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">
+              Target graduation term (optional)
+            </label>
+            <input
+              type="text"
+              value={targetGradTermInput}
+              onChange={(event) => setTargetGradTermInput(event.target.value)}
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="e.g., 2027-F"
+            />
+            <p className="text-xs text-gray-500">
+              If provided and included in the allowed terms, the planner will try to finish by this term.
             </p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -292,6 +347,22 @@ function formatTimeLabel(minutes: number): string {
   return `${hours}:${paddedMinutes}`;
 }
 
+function parseTimeToMinutes(time: string): number | null {
+  const parts = time.split(":");
+  if (parts.length !== 2) {
+    return null;
+  }
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
 function DegreePlanPage() {
   const { state } = usePlanningContext();
   const plan = state.lastDegreePlan;
@@ -310,11 +381,39 @@ function DegreePlanPage() {
       end_time_minutes: number;
     }[]
   >([]);
+  const [avoidFridays, setAvoidFridays] = useState<boolean>(false);
+  const [earliestTimeInput, setEarliestTimeInput] = useState("09:00");
+  const [latestTimeInput, setLatestTimeInput] = useState("18:00");
+  const [timingError, setTimingError] = useState<string | null>(null);
+
+  const fallbackEarliestMinutes = 540;
+  const fallbackLatestMinutes = 1080;
+
+  const parsedEarliest = parseTimeToMinutes(earliestTimeInput);
+  const parsedLatest = parseTimeToMinutes(latestTimeInput);
+
+  const earliestTimeMinutes = parsedEarliest !== null ? parsedEarliest : fallbackEarliestMinutes;
+  const latestTimeMinutes = parsedLatest !== null ? parsedLatest : fallbackLatestMinutes;
 
   const handleGenerateTimetable = (termId: string, courseCodes: string[]) => {
     if (!courseCodes.length) {
       return;
     }
+
+    const earliest = parseTimeToMinutes(earliestTimeInput);
+    const latest = parseTimeToMinutes(latestTimeInput);
+
+    if (earliest === null || latest === null) {
+      setTimingError("Enter valid times in HH:MM format.");
+      return;
+    }
+
+    if (earliest >= latest) {
+      setTimingError("Earliest time must be before latest time.");
+      return;
+    }
+
+    setTimingError(null);
     setLoadingTermId(termId);
     setSelectedTermId(termId);
     timetableMutation.mutate(
@@ -322,8 +421,9 @@ function DegreePlanPage() {
         term_id: termId,
         course_codes: courseCodes,
         preferences: {
-          earliest_time_minutes: 540,
-          latest_time_minutes: 1080
+          earliest_time_minutes: earliest,
+          latest_time_minutes: latest,
+          avoid_friday: avoidFridays
         }
       },
       {
@@ -393,6 +493,43 @@ function DegreePlanPage() {
               </ul>
             </div>
           )}
+          <div className="flex flex-col gap-3 rounded-lg border bg-white p-4 text-sm text-gray-700">
+            <div className="mb-1 font-semibold text-gray-900">Timetable preferences</div>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex flex-col gap-1 text-xs text-gray-700">
+                <span>Earliest time</span>
+                <input
+                  type="time"
+                  value={earliestTimeInput}
+                  onChange={(event) => setEarliestTimeInput(event.target.value)}
+                  className="rounded-md border px-2 py-1 text-xs"
+                />
+              </div>
+              <div className="flex flex-col gap-1 text-xs text-gray-700">
+                <span>Latest time</span>
+                <input
+                  type="time"
+                  value={latestTimeInput}
+                  onChange={(event) => setLatestTimeInput(event.target.value)}
+                  className="rounded-md border px-2 py-1 text-xs"
+                />
+              </div>
+              <label className="mt-4 flex items-center gap-2 text-xs text-gray-800">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={avoidFridays}
+                  onChange={(event) => setAvoidFridays(event.target.checked)}
+                />
+                <span>Avoid Fridays if possible</span>
+              </label>
+            </div>
+            {timingError && (
+              <div className="text-xs text-red-600">
+                {timingError}
+              </div>
+            )}
+          </div>
           <div className="grid gap-4 md:grid-cols-2">
             {plan.terms.map((term) => (
               <div
@@ -436,7 +573,7 @@ function DegreePlanPage() {
                   Timetable for {latestTimetableTermId}
                 </div>
                 <div className="text-xs text-gray-600">
-                  Time window: {formatTimeLabel(540)} to {formatTimeLabel(1080)}
+                  Time window: {formatTimeLabel(earliestTimeMinutes)} to {formatTimeLabel(latestTimeMinutes)}
                 </div>
               </div>
               <div className="grid gap-4 md:grid-cols-5">

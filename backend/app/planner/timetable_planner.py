@@ -77,6 +77,7 @@ def compute_timetable(
     preferences: TimetablePreferences = request.preferences
     earliest_time = preferences.earliest_time_minutes
     latest_time = preferences.latest_time_minutes
+    avoid_friday = preferences.avoid_friday is True
 
     penalty_coefficients: dict[int, int] = {}
     for index in section_indices:
@@ -85,6 +86,8 @@ def compute_timetable(
         if earliest_time is not None and section.start_time_minutes < earliest_time:
             penalty += 1
         if latest_time is not None and section.end_time_minutes > latest_time:
+            penalty += 1
+        if avoid_friday and section.day_of_week.upper() == "FRI":
             penalty += 1
         penalty_coefficients[index] = penalty
 
@@ -132,5 +135,7 @@ def compute_timetable(
         warnings.append("Time conflicts between chosen sections are avoided.")
     if earliest_time is not None or latest_time is not None:
         warnings.append("Sections outside preferred time bounds are penalized in the objective.")
+    if avoid_friday:
+        warnings.append("Friday sections are penalized in the objective when alternatives exist.")
 
     return TimetableResponse(sections=selected_sections, objective=objective, warnings=warnings)

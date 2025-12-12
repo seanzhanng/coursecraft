@@ -3,12 +3,14 @@ import { DegreePlanResponse } from "../api/degreePlans";
 
 type PlanningState = {
   selectedProgramId: string | null;
+  completedCourseCodes: string[];
   lastDegreePlan: DegreePlanResponse | null;
 };
 
 type PlanningContextValue = {
   state: PlanningState;
   setSelectedProgramId: (programId: string | null) => void;
+  setCompletedCourseCodes: (courseCodes: string[]) => void;
   setLastDegreePlan: (plan: DegreePlanResponse | null) => void;
   reset: () => void;
 };
@@ -21,15 +23,22 @@ type PlanningProviderProps = {
 
 export function PlanningProvider(props: PlanningProviderProps) {
   const [selectedProgramId, setSelectedProgramIdState] = useState<string | null>(null);
+  const [completedCourseCodes, setCompletedCourseCodesState] = useState<string[]>([]);
   const [lastDegreePlan, setLastDegreePlanState] = useState<DegreePlanResponse | null>(null);
 
   const value: PlanningContextValue = {
     state: {
       selectedProgramId,
+      completedCourseCodes,
       lastDegreePlan
     },
     setSelectedProgramId: (programId) => {
       setSelectedProgramIdState(programId);
+      setCompletedCourseCodesState([]);
+      setLastDegreePlanState(null);
+    },
+    setCompletedCourseCodes: (courseCodes) => {
+      setCompletedCourseCodesState(courseCodes);
       setLastDegreePlanState(null);
     },
     setLastDegreePlan: (plan) => {
@@ -37,6 +46,7 @@ export function PlanningProvider(props: PlanningProviderProps) {
     },
     reset: () => {
       setSelectedProgramIdState(null);
+      setCompletedCourseCodesState([]);
       setLastDegreePlanState(null);
     }
   };

@@ -31,6 +31,7 @@ class DegreePlanResponse(BaseModel):
 class TimetablePreferences(BaseModel):
     earliest_time_minutes: int | None = None
     latest_time_minutes: int | None = None
+    avoid_friday: bool | None = None
 
 
 class TimetableRequest(BaseModel):

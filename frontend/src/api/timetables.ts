@@ -24,6 +24,7 @@ export type TimetableResponse = {
 export type TimetablePreferences = {
   earliest_time_minutes: number | null;
   latest_time_minutes: number | null;
+  avoid_friday: boolean | null;
 };
 
 export type TimetableRequest = {
