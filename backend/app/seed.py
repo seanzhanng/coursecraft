@@ -1,20 +1,20 @@
 from app.db import SessionLocal
-from app.models import Program, Course, Prerequisite, ProgramRequirement
+from app.models import Program, Course, Prerequisite, ProgramRequirement, CourseOffering
 
 
 def seed_database() -> None:
     database_session = SessionLocal()
     try:
-        existing_program = database_session.get(Program, "uw-cs-honours")
-        if existing_program is not None:
-            return
+        program_id = "uw-cs-honours"
 
-        program = Program(
-            id="uw-cs-honours",
-            name="Honours Computer Science",
-            description="Sample CS honours program for CourseCraft demo",
-        )
-        database_session.add(program)
+        program = database_session.get(Program, program_id)
+        if program is None:
+            program = Program(
+                id=program_id,
+                name="Honours Computer Science",
+                description="Sample CS honours program for CourseCraft demo",
+            )
+            database_session.add(program)
 
         course_definitions = [
             {
@@ -81,15 +81,22 @@ def seed_database() -> None:
 
         course_models: list[Course] = []
         for course_definition in course_definitions:
-            course_model = Course(
-                code=course_definition["code"],
-                name=course_definition["name"],
-                credits=course_definition["credits"],
-                description=course_definition["description"],
-            )
-            course_models.append(course_model)
+            code = course_definition["code"]
+            course = database_session.get(Course, code)
+            if course is None:
+                course = Course(
+                    code=code,
+                    name=course_definition["name"],
+                    credits=course_definition["credits"],
+                    description=course_definition["description"],
+                )
+                database_session.add(course)
+            else:
+                course.name = course_definition["name"]
+                course.credits = course_definition["credits"]
+                course.description = course_definition["description"]
+            course_models.append(course)
 
-        database_session.add_all(course_models)
         database_session.flush()
 
         prerequisite_pairs = [
@@ -103,26 +110,60 @@ def seed_database() -> None:
             ("STAT230", "MATH135"),
         ]
 
-        prerequisite_models: list[Prerequisite] = []
-        for course_code, prerequisite_code in prerequisite_pairs:
+        existing_prerequisites = database_session.query(Prerequisite).all()
+        existing_prereq_pairs = {(p.course_code, p.prereq_code) for p in existing_prerequisites}
+
+        for course_code, prereq_code in prerequisite_pairs:
+            if (course_code, prereq_code) in existing_prereq_pairs:
+                continue
             prerequisite_model = Prerequisite(
                 course_code=course_code,
-                prereq_code=prerequisite_code,
+                prereq_code=prereq_code,
             )
-            prerequisite_models.append(prerequisite_model)
+            database_session.add(prerequisite_model)
 
-        database_session.add_all(prerequisite_models)
+        existing_requirements = database_session.query(ProgramRequirement).all()
+        existing_requirement_keys = {
+            (r.program_id, r.course_code, r.requirement_type) for r in existing_requirements
+        }
 
-        program_requirement_models: list[ProgramRequirement] = []
         for course_model in course_models:
+            key = (program.id, course_model.code, "REQUIRED")
+            if key in existing_requirement_keys:
+                continue
             program_requirement_model = ProgramRequirement(
                 program_id=program.id,
                 course_code=course_model.code,
                 requirement_type="REQUIRED",
             )
-            program_requirement_models.append(program_requirement_model)
+            database_session.add(program_requirement_model)
 
-        database_session.add_all(program_requirement_models)
+        course_offering_definitions = [
+            ("CS135", "2026-F"),
+            ("CS135", "2027-F"),
+            ("CS136", "2027-W"),
+            ("CS136", "2028-W"),
+            ("CS240", "2027-F"),
+            ("CS241", "2027-F"),
+            ("CS245", "2028-W"),
+            ("CS246", "2028-W"),
+            ("MATH135", "2026-F"),
+            ("MATH136", "2027-W"),
+            ("MATH239", "2027-F"),
+            ("STAT230", "2027-W"),
+        ]
+
+        existing_offerings = database_session.query(CourseOffering).all()
+        existing_offering_pairs = {(o.course_code, o.term_id) for o in existing_offerings}
+
+        for course_code, term_id in course_offering_definitions:
+            if (course_code, term_id) in existing_offering_pairs:
+                continue
+            course_offering = CourseOffering(
+                course_code=course_code,
+                term_id=term_id,
+            )
+            database_session.add(course_offering)
 
         database_session.commit()
     finally:

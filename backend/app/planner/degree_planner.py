@@ -13,12 +13,21 @@ class RequiredCourse:
 
 
 @dataclass
+class CoursePrerequisite:
+    course_code: str
+    prerequisite_code: str
+
+
+@dataclass
 class CatalogSnapshot:
     required_courses: list[RequiredCourse]
+    prerequisites: list[CoursePrerequisite]
+    offered_term_indices_by_course: Mapping[str, set[int]]
+    completed_courses: set[str]
 
 
 def compute_degree_plan(request: DegreePlanRequest, catalog: CatalogSnapshot) -> DegreePlanResponse:
-    allowed_terms = request.allowed_terms
+    allowed_terms = list(request.allowed_terms)
     if request.max_terms is not None and request.max_terms < len(allowed_terms):
         allowed_terms = allowed_terms[: request.max_terms]
 
@@ -41,6 +50,15 @@ def compute_degree_plan(request: DegreePlanRequest, catalog: CatalogSnapshot) ->
     for course_index in course_indices:
         model.Add(sum(x[(course_index, term_index)] for term_index in term_indices) == 1)
 
+    for course_index in course_indices:
+        course = catalog.required_courses[course_index]
+        allowed_term_indices_for_course = catalog.offered_term_indices_by_course.get(
+            course.code, set(term_indices)
+        )
+        for term_index in term_indices:
+            if term_index not in allowed_term_indices_for_course:
+                model.Add(x[(course_index, term_index)] == 0)
+
     max_credits = request.max_credits_per_term
     for term_index in term_indices:
         term_load_expr = []
@@ -57,6 +75,23 @@ def compute_degree_plan(request: DegreePlanRequest, catalog: CatalogSnapshot) ->
             course_term_indices[course_index]
             == sum(term_index * x[(course_index, term_index)] for term_index in term_indices)
         )
+
+    code_to_index: dict[str, int] = {}
+    for course_index, course in enumerate(catalog.required_courses):
+        code_to_index[course.code] = course_index
+
+    for relation in catalog.prerequisites:
+        course_code = relation.course_code
+        prerequisite_code = relation.prerequisite_code
+        if course_code not in code_to_index:
+            continue
+        if prerequisite_code in catalog.completed_courses:
+            continue
+        if prerequisite_code not in code_to_index:
+            continue
+        course_index = code_to_index[course_code]
+        prerequisite_index = code_to_index[prerequisite_code]
+        model.Add(course_term_indices[course_index] >= course_term_indices[prerequisite_index] + 1)
 
     objective_expr = sum(course_term_indices.values())
     model.Minimize(objective_expr)
@@ -97,9 +132,11 @@ def compute_degree_plan(request: DegreePlanRequest, catalog: CatalogSnapshot) ->
 
     terms.sort(key=lambda term: allowed_terms.index(term.term_id))
 
-    warnings: list[str] = [
-        "Prerequisites and term offerings are not yet enforced in the planner."
-    ]
+    warnings: list[str] = []
+    if catalog.prerequisites:
+        warnings.append("Prerequisites between program courses are enforced.")
+    if catalog.offered_term_indices_by_course:
+        warnings.append("Course offerings are enforced when available. Courses without offerings are assumed available in all allowed terms.")
 
     objective = DegreePlanObjective(
         status="OPTIMAL" if solver_status == cp_model.OPTIMAL else "FEASIBLE",
