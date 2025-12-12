@@ -3,6 +3,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { usePrograms } from "./api/programs";
 import { useCourses } from "./api/courses";
 import { useDegreePlan } from "./api/degreePlans";
+import { useTimetablePlan } from "./api/timetables";
 import { usePlanningContext } from "./planning/PlanningContext";
 
 function NavigationBar() {
@@ -277,16 +278,81 @@ function ConstraintsPage() {
       </div>
       {degreePlanMutation.isSuccess && (
         <div className="rounded-lg border bg-gray-50 p-4 text-sm text-gray-700">
-          Latest plan has been generated. Open the Degree Plan page to view details.
+          Latest plan has been generated. Open the Degree Plan page to view details and build timetables.
         </div>
       )}
     </main>
   );
 }
 
+function formatTimeLabel(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const minutesPart = minutes % 60;
+  const paddedMinutes = minutesPart.toString().padStart(2, "0");
+  return `${hours}:${paddedMinutes}`;
+}
+
 function DegreePlanPage() {
   const { state } = usePlanningContext();
   const plan = state.lastDegreePlan;
+
+  const timetableMutation = useTimetablePlan();
+  const [selectedTermId, setSelectedTermId] = useState<string | null>(null);
+  const [loadingTermId, setLoadingTermId] = useState<string | null>(null);
+  const [latestTimetableTermId, setLatestTimetableTermId] = useState<string | null>(null);
+  const [latestTimetableSections, setLatestTimetableSections] = useState<
+    {
+      section_id: string;
+      course_code: string;
+      kind: string;
+      day_of_week: string;
+      start_time_minutes: number;
+      end_time_minutes: number;
+    }[]
+  >([]);
+
+  const handleGenerateTimetable = (termId: string, courseCodes: string[]) => {
+    if (!courseCodes.length) {
+      return;
+    }
+    setLoadingTermId(termId);
+    setSelectedTermId(termId);
+    timetableMutation.mutate(
+      {
+        term_id: termId,
+        course_codes: courseCodes,
+        preferences: {
+          earliest_time_minutes: 540,
+          latest_time_minutes: 1080
+        }
+      },
+      {
+        onSuccess: (timetable) => {
+          setLatestTimetableTermId(termId);
+          setLatestTimetableSections(timetable.sections);
+        },
+        onSettled: () => {
+          setLoadingTermId(null);
+        }
+      }
+    );
+  };
+
+  const days = ["MON", "TUE", "WED", "THU", "FRI"];
+
+  const sectionsByDay: Record<string, typeof latestTimetableSections> = {};
+  for (const day of days) {
+    sectionsByDay[day] = [];
+  }
+  for (const section of latestTimetableSections) {
+    if (!sectionsByDay[section.day_of_week]) {
+      sectionsByDay[section.day_of_week] = [];
+    }
+    sectionsByDay[section.day_of_week].push(section);
+  }
+  for (const day of days) {
+    sectionsByDay[day].sort((a, b) => a.start_time_minutes - b.start_time_minutes);
+  }
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -302,7 +368,7 @@ function DegreePlanPage() {
         </p>
       )}
       {state.selectedProgramId && plan && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           <div className="rounded-lg border bg-white p-4">
             <div className="mb-2 text-sm text-gray-700">
               Program:{" "}
@@ -329,7 +395,12 @@ function DegreePlanPage() {
           )}
           <div className="grid gap-4 md:grid-cols-2">
             {plan.terms.map((term) => (
-              <div key={term.term_id} className="rounded-lg border bg-white p-4">
+              <div
+                key={term.term_id}
+                className={`rounded-lg border bg-white p-4 ${
+                  selectedTermId === term.term_id ? "ring-2 ring-blue-500" : ""
+                }`}
+              >
                 <div className="mb-2 flex items-center justify-between text-sm">
                   <div className="font-semibold text-gray-900">{term.term_id}</div>
                   <div className="text-gray-700">
@@ -342,9 +413,70 @@ function DegreePlanPage() {
                     <li key={code}>{code}</li>
                   ))}
                 </ul>
+                <button
+                  type="button"
+                  onClick={() => handleGenerateTimetable(term.term_id, term.course_codes)}
+                  disabled={loadingTermId === term.term_id || term.course_codes.length === 0}
+                  className="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:bg-blue-300"
+                >
+                  {loadingTermId === term.term_id ? "Building timetable" : "Generate timetable"}
+                </button>
               </div>
             ))}
           </div>
+          {timetableMutation.isError && (
+            <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+              Failed to build timetable. Check backend logs.
+            </div>
+          )}
+          {latestTimetableTermId && latestTimetableSections.length > 0 && (
+            <div className="rounded-lg border bg-white p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="text-sm font-semibold text-gray-900">
+                  Timetable for {latestTimetableTermId}
+                </div>
+                <div className="text-xs text-gray-600">
+                  Time window: {formatTimeLabel(540)} to {formatTimeLabel(1080)}
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-5">
+                {days.map((day) => (
+                  <div key={day} className="border-t pt-2 text-sm">
+                    <div className="mb-2 text-xs font-semibold text-gray-700">
+                      {day}
+                    </div>
+                    {sectionsByDay[day].length === 0 && (
+                      <div className="text-xs text-gray-400">No classes</div>
+                    )}
+                    <div className="space-y-2">
+                      {sectionsByDay[day].map((section) => (
+                        <div
+                          key={section.section_id}
+                          className="rounded-md border bg-blue-50 px-2 py-1 text-xs text-blue-900"
+                        >
+                          <div className="font-semibold">
+                            {section.course_code}
+                          </div>
+                          <div>
+                            {formatTimeLabel(section.start_time_minutes)}{" "}
+                            to {formatTimeLabel(section.end_time_minutes)}
+                          </div>
+                          <div className="uppercase">
+                            {section.kind}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {latestTimetableTermId && latestTimetableSections.length === 0 && (
+            <div className="rounded-lg border bg-gray-50 p-4 text-sm text-gray-700">
+              No sections could be scheduled for {latestTimetableTermId}.
+            </div>
+          )}
         </div>
       )}
     </main>

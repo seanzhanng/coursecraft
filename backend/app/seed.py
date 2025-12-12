@@ -1,5 +1,5 @@
 from app.db import SessionLocal
-from app.models import Program, Course, Prerequisite, ProgramRequirement, CourseOffering
+from app.models import Program, Course, Prerequisite, ProgramRequirement, CourseOffering, Section
 
 
 def seed_database() -> None:
@@ -164,6 +164,137 @@ def seed_database() -> None:
                 term_id=term_id,
             )
             database_session.add(course_offering)
+
+        section_definitions = [
+            (
+                "CS240",
+                "2027-F",
+                "CS240-LEC-001",
+                "LEC",
+                "MON",
+                570,
+                650,
+                "MC 2066",
+            ),
+            (
+                "CS240",
+                "2027-F",
+                "CS240-LEC-002",
+                "LEC",
+                "TUE",
+                780,
+                860,
+                "MC 2066",
+            ),
+            (
+                "CS241",
+                "2027-F",
+                "CS241-LEC-001",
+                "LEC",
+                "MON",
+                660,
+                740,
+                "MC 2067",
+            ),
+            (
+                "CS241",
+                "2027-F",
+                "CS241-LEC-002",
+                "LEC",
+                "WED",
+                900,
+                980,
+                "MC 2067",
+            ),
+            (
+                "MATH239",
+                "2027-F",
+                "MATH239-LEC-001",
+                "LEC",
+                "TUE",
+                600,
+                680,
+                "RCH 101",
+            ),
+            (
+                "MATH239",
+                "2027-F",
+                "MATH239-LEC-002",
+                "LEC",
+                "THU",
+                840,
+                920,
+                "RCH 101",
+            ),
+            (
+                "CS136",
+                "2027-W",
+                "CS136-LEC-001",
+                "LEC",
+                "MON",
+                570,
+                650,
+                "MC 2065",
+            ),
+            (
+                "CS136",
+                "2027-W",
+                "CS136-LEC-002",
+                "LEC",
+                "WED",
+                780,
+                860,
+                "MC 2065",
+            ),
+            (
+                "STAT230",
+                "2027-W",
+                "STAT230-LEC-001",
+                "LEC",
+                "TUE",
+                600,
+                680,
+                "DWE 1501",
+            ),
+            (
+                "STAT230",
+                "2027-W",
+                "STAT230-LEC-002",
+                "LEC",
+                "THU",
+                900,
+                980,
+                "DWE 1501",
+            ),
+        ]
+
+        existing_sections = database_session.query(Section).all()
+        existing_section_keys = {(s.course_code, s.term_id, s.section_code) for s in existing_sections}
+
+        for (
+            course_code,
+            term_id,
+            section_code,
+            kind,
+            day_of_week,
+            start_time_minutes,
+            end_time_minutes,
+            location,
+        ) in section_definitions:
+            key = (course_code, term_id, section_code)
+            if key in existing_section_keys:
+                continue
+            section = Section(
+                course_code=course_code,
+                term_id=term_id,
+                section_code=section_code,
+                kind=kind,
+                day_of_week=day_of_week,
+                start_time_minutes=start_time_minutes,
+                end_time_minutes=end_time_minutes,
+                location=location,
+            )
+            database_session.add(section)
 
         database_session.commit()
     finally:
