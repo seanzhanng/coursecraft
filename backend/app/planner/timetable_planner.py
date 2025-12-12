@@ -9,6 +9,7 @@ from app.schemas.planning import (
     ScheduledSection,
     TimetableResponse,
     TimetableObjective,
+    TimetableOption,
 )
 
 
@@ -35,8 +36,10 @@ def compute_timetable(
     sections: Sequence[TimetableSectionInput],
 ) -> TimetableResponse:
     if not request.course_codes:
-        objective = TimetableObjective(status="NO_COURSES", total_penalty=0.0)
-        return TimetableResponse(sections=[], objective=objective, warnings=[])
+        return TimetableResponse(
+            options=[TimetableOption(sections=[], objective=TimetableObjective(status="NO_COURSES", total_penalty=0.0))],
+            warnings=[],
+        )
 
     sections_for_course: dict[str, list[int]] = {}
     for index, section in enumerate(sections):
@@ -46,22 +49,19 @@ def compute_timetable(
 
     missing_courses = [code for code in request.course_codes if code not in sections_for_course]
     if missing_courses:
-        objective = TimetableObjective(status="NO_SECTIONS_FOR_COURSE", total_penalty=None)
         warning_text = "No sections found for courses: " + ", ".join(sorted(missing_courses))
-        return TimetableResponse(sections=[], objective=objective, warnings=[warning_text])
+        return TimetableResponse(
+            options=[],
+            warnings=[warning_text],
+        )
 
-    model = cp_model.CpModel()
+    preferences: TimetablePreferences = request.preferences
+    earliest_time = preferences.earliest_time_minutes
+    latest_time = preferences.latest_time_minutes
+    avoid_friday = preferences.avoid_friday is True
 
     num_sections = len(sections)
     section_indices = list(range(num_sections))
-
-    y: dict[int, cp_model.IntVar] = {}
-    for index in section_indices:
-        y[index] = model.NewBoolVar(f"y_{index}")
-
-    for course_code in request.course_codes:
-        indices = sections_for_course.get(course_code, [])
-        model.Add(sum(y[index] for index in indices) == 1)
 
     overlapping_pairs: list[tuple[int, int]] = []
     for i in section_indices:
@@ -70,14 +70,6 @@ def compute_timetable(
                 continue
             if sections_overlap(sections[i], sections[j]):
                 overlapping_pairs.append((i, j))
-
-    for i, j in overlapping_pairs:
-        model.Add(y[i] + y[j] <= 1)
-
-    preferences: TimetablePreferences = request.preferences
-    earliest_time = preferences.earliest_time_minutes
-    latest_time = preferences.latest_time_minutes
-    avoid_friday = preferences.avoid_friday is True
 
     penalty_coefficients: dict[int, int] = {}
     for index in section_indices:
@@ -91,29 +83,67 @@ def compute_timetable(
             penalty += 1
         penalty_coefficients[index] = penalty
 
-    total_penalty_expr = []
+    requested_max = request.max_solutions if request.max_solutions is not None else 25
+    if requested_max < 1:
+        max_solutions = 1
+    elif requested_max > 100:
+        max_solutions = 100
+    else:
+        max_solutions = requested_max
+
+    model = cp_model.CpModel()
+
+    y: dict[int, cp_model.IntVar] = {}
+    for index in section_indices:
+        y[index] = model.NewBoolVar(f"y_{index}")
+
+    for course_code in request.course_codes:
+        indices = sections_for_course.get(course_code, [])
+        model.Add(sum(y[index] for index in indices) == 1)
+
+    for i, j in overlapping_pairs:
+        model.Add(y[i] + y[j] <= 1)
+
+    total_penalty_expr_terms: list[cp_model.LinearExpr] = []
     for index in section_indices:
         coefficient = penalty_coefficients[index]
         if coefficient > 0:
-            total_penalty_expr.append(coefficient * y[index])
+            total_penalty_expr_terms.append(coefficient * y[index])
 
-    if total_penalty_expr:
-        model.Minimize(sum(total_penalty_expr))
+    if total_penalty_expr_terms:
+        model.Minimize(sum(total_penalty_expr_terms))
     else:
         model.Minimize(0)
 
-    solver = cp_model.CpSolver()
-    solver_status = solver.Solve(model)
+    options: list[TimetableOption] = []
+    warnings: list[str] = []
 
-    if solver_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        objective = TimetableObjective(status="INFEASIBLE", total_penalty=None)
-        warnings = ["No feasible timetable found for the requested sections and preferences."]
-        return TimetableResponse(sections=[], objective=objective, warnings=warnings)
+    if overlapping_pairs:
+        warnings.append("Time conflicts between chosen sections are avoided.")
+    if earliest_time is not None or latest_time is not None:
+        warnings.append("Sections outside preferred time bounds are penalized in the objective.")
+    if avoid_friday:
+        warnings.append("Friday sections are penalized in the objective when alternatives exist.")
 
-    selected_sections: list[ScheduledSection] = []
-    total_penalty_value = 0
-    for index in section_indices:
-        if solver.Value(y[index]) == 1:
+    while len(options) < max_solutions:
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = 5.0
+        solver_status = solver.Solve(model)
+
+        if solver_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break
+
+        selected_indices: list[int] = []
+        for index in section_indices:
+            if solver.Value(y[index]) == 1:
+                selected_indices.append(index)
+
+        if not selected_indices:
+            break
+
+        selected_sections: list[ScheduledSection] = []
+        total_penalty_value = 0
+        for index in selected_indices:
             section = sections[index]
             selected_sections.append(
                 ScheduledSection(
@@ -127,15 +157,22 @@ def compute_timetable(
             )
             total_penalty_value += penalty_coefficients[index]
 
-    objective_status = "OPTIMAL" if solver_status == cp_model.OPTIMAL else "FEASIBLE"
-    objective = TimetableObjective(status=objective_status, total_penalty=float(total_penalty_value))
+        objective_status = "OPTIMAL" if solver_status == cp_model.OPTIMAL else "FEASIBLE"
+        option = TimetableOption(
+            sections=selected_sections,
+            objective=TimetableObjective(status=objective_status, total_penalty=float(total_penalty_value)),
+        )
+        options.append(option)
 
-    warnings: list[str] = []
-    if overlapping_pairs:
-        warnings.append("Time conflicts between chosen sections are avoided.")
-    if earliest_time is not None or latest_time is not None:
-        warnings.append("Sections outside preferred time bounds are penalized in the objective.")
-    if avoid_friday:
-        warnings.append("Friday sections are penalized in the objective when alternatives exist.")
+        model.Add(sum(y[index] for index in selected_indices) <= len(selected_indices) - 1)
 
-    return TimetableResponse(sections=selected_sections, objective=objective, warnings=warnings)
+    if not options:
+        return TimetableResponse(
+            options=[],
+            warnings=["No feasible timetable found for the requested courses and constraints."],
+        )
+
+    if len(options) == max_solutions:
+        warnings.append("Returned timetable options are capped. Increase max_solutions to search for more.")
+
+    return TimetableResponse(options=options, warnings=warnings)

@@ -15,9 +15,13 @@ export type TimetableObjective = {
   total_penalty: number | null;
 };
 
-export type TimetableResponse = {
+export type TimetableOption = {
   sections: TimetableSection[];
   objective: TimetableObjective;
+};
+
+export type TimetableResponse = {
+  options: TimetableOption[];
   warnings: string[];
 };
 
@@ -31,6 +35,7 @@ export type TimetableRequest = {
   term_id: string;
   course_codes: string[];
   preferences: TimetablePreferences;
+  max_solutions?: number | null;
 };
 
 async function planTimetable(request: TimetableRequest): Promise<TimetableResponse> {

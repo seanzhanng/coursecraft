@@ -38,6 +38,7 @@ class TimetableRequest(BaseModel):
     term_id: str
     course_codes: list[str]
     preferences: TimetablePreferences
+    max_solutions: int | None = None
 
 
 class ScheduledSection(BaseModel):
@@ -54,7 +55,11 @@ class TimetableObjective(BaseModel):
     total_penalty: float | None = None
 
 
-class TimetableResponse(BaseModel):
+class TimetableOption(BaseModel):
     sections: list[ScheduledSection]
     objective: TimetableObjective
+
+
+class TimetableResponse(BaseModel):
+    options: list[TimetableOption]
     warnings: list[str] = []

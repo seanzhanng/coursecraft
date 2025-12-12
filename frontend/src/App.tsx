@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { usePrograms } from "./api/programs";
 import { useCourses } from "./api/courses";
@@ -370,21 +370,50 @@ function DegreePlanPage() {
   const timetableMutation = useTimetablePlan();
   const [selectedTermId, setSelectedTermId] = useState<string | null>(null);
   const [loadingTermId, setLoadingTermId] = useState<string | null>(null);
+
   const [latestTimetableTermId, setLatestTimetableTermId] = useState<string | null>(null);
-  const [latestTimetableSections, setLatestTimetableSections] = useState<
+  const [timetableOptions, setTimetableOptions] = useState<
     {
-      section_id: string;
-      course_code: string;
-      kind: string;
-      day_of_week: string;
-      start_time_minutes: number;
-      end_time_minutes: number;
+      sections: {
+        section_id: string;
+        course_code: string;
+        kind: string;
+        day_of_week: string;
+        start_time_minutes: number;
+        end_time_minutes: number;
+      }[];
+      objective: {
+        status: string;
+        total_penalty: number | null;
+      };
     }[]
   >([]);
+  const [selectedTimetableIndex, setSelectedTimetableIndex] = useState<number | null>(null);
+
   const [avoidFridays, setAvoidFridays] = useState<boolean>(false);
   const [earliestTimeInput, setEarliestTimeInput] = useState("09:00");
   const [latestTimeInput, setLatestTimeInput] = useState("18:00");
   const [timingError, setTimingError] = useState<string | null>(null);
+
+  const { data: allCourses } = useCourses();
+
+  const courseByCode: Record<
+    string,
+    {
+      code: string;
+      name: string;
+      credits: number;
+    }
+  > = {};
+  if (allCourses) {
+    for (const course of allCourses) {
+      courseByCode[course.code] = {
+        code: course.code,
+        name: course.name,
+        credits: course.credits
+      };
+    }
+  }
 
   const fallbackEarliestMinutes = 540;
   const fallbackLatestMinutes = 1080;
@@ -394,6 +423,26 @@ function DegreePlanPage() {
 
   const earliestTimeMinutes = parsedEarliest !== null ? parsedEarliest : fallbackEarliestMinutes;
   const latestTimeMinutes = parsedLatest !== null ? parsedLatest : fallbackLatestMinutes;
+
+  const activeSections = useMemo(() => {
+    if (selectedTimetableIndex === null) {
+      return [];
+    }
+    if (selectedTimetableIndex < 0 || selectedTimetableIndex >= timetableOptions.length) {
+      return [];
+    }
+    return timetableOptions[selectedTimetableIndex].sections;
+  }, [selectedTimetableIndex, timetableOptions]);
+
+  const activePenalty = useMemo(() => {
+    if (selectedTimetableIndex === null) {
+      return null;
+    }
+    if (selectedTimetableIndex < 0 || selectedTimetableIndex >= timetableOptions.length) {
+      return null;
+    }
+    return timetableOptions[selectedTimetableIndex].objective.total_penalty;
+  }, [selectedTimetableIndex, timetableOptions]);
 
   const handleGenerateTimetable = (termId: string, courseCodes: string[]) => {
     if (!courseCodes.length) {
@@ -416,6 +465,11 @@ function DegreePlanPage() {
     setTimingError(null);
     setLoadingTermId(termId);
     setSelectedTermId(termId);
+
+    setLatestTimetableTermId(null);
+    setTimetableOptions([]);
+    setSelectedTimetableIndex(null);
+
     timetableMutation.mutate(
       {
         term_id: termId,
@@ -424,12 +478,14 @@ function DegreePlanPage() {
           earliest_time_minutes: earliest,
           latest_time_minutes: latest,
           avoid_friday: avoidFridays
-        }
+        },
+        max_solutions: 50
       },
       {
         onSuccess: (timetable) => {
           setLatestTimetableTermId(termId);
-          setLatestTimetableSections(timetable.sections);
+          setTimetableOptions(timetable.options);
+          setSelectedTimetableIndex(timetable.options.length > 0 ? 0 : null);
         },
         onSettled: () => {
           setLoadingTermId(null);
@@ -438,13 +494,58 @@ function DegreePlanPage() {
     );
   };
 
+  const handleExportPlanJson = () => {
+    if (!plan) {
+      return;
+    }
+    const json = JSON.stringify(plan, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "coursecraft-degree-plan.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportSelectedTimetableJson = () => {
+    if (!latestTimetableTermId) {
+      return;
+    }
+    if (selectedTimetableIndex === null) {
+      return;
+    }
+    if (selectedTimetableIndex < 0 || selectedTimetableIndex >= timetableOptions.length) {
+      return;
+    }
+    const payload = {
+      term_id: latestTimetableTermId,
+      option_index: selectedTimetableIndex,
+      objective: timetableOptions[selectedTimetableIndex].objective,
+      sections: timetableOptions[selectedTimetableIndex].sections
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const safeTerm = latestTimetableTermId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    link.download = `coursecraft-timetable-${safeTerm}-option-${selectedTimetableIndex + 1}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const days = ["MON", "TUE", "WED", "THU", "FRI"];
 
-  const sectionsByDay: Record<string, typeof latestTimetableSections> = {};
+  const sectionsByDay: Record<string, typeof activeSections> = {};
   for (const day of days) {
     sectionsByDay[day] = [];
   }
-  for (const section of latestTimetableSections) {
+  for (const section of activeSections) {
     if (!sectionsByDay[section.day_of_week]) {
       sectionsByDay[section.day_of_week] = [];
     }
@@ -453,6 +554,9 @@ function DegreePlanPage() {
   for (const day of days) {
     sectionsByDay[day].sort((a, b) => a.start_time_minutes - b.start_time_minutes);
   }
+
+  const plannedGraduationTermId =
+    plan && plan.terms.length > 0 ? plan.terms[plan.terms.length - 1].term_id : null;
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-8">
@@ -476,11 +580,34 @@ function DegreePlanPage() {
                 {state.selectedProgramId}
               </span>
             </div>
-            <div className="text-sm text-gray-700">
+            <div className="mb-2 text-sm text-gray-700">
               Solver status:{" "}
               <span className="font-medium text-gray-900">
                 {plan.objective.status}
               </span>
+            </div>
+            <div className="mb-3 text-sm text-gray-700">
+              Planned graduation term:{" "}
+              <span className="font-medium text-gray-900">
+                {plannedGraduationTermId ?? "not determined"}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs">
+              <button
+                type="button"
+                onClick={handleExportPlanJson}
+                className="rounded-md border border-blue-600 px-3 py-1.5 font-medium text-blue-600 hover:bg-blue-50"
+              >
+                Download degree plan JSON
+              </button>
+              <button
+                type="button"
+                onClick={handleExportSelectedTimetableJson}
+                disabled={!latestTimetableTermId || selectedTimetableIndex === null || timetableOptions.length === 0}
+                className="rounded-md border px-3 py-1.5 font-medium disabled:border-gray-300 disabled:text-gray-400 border-blue-600 text-blue-600 hover:bg-blue-50 disabled:hover:bg-transparent"
+              >
+                Download selected timetable JSON
+              </button>
             </div>
           </div>
           {plan.warnings.length > 0 && (
@@ -546,9 +673,11 @@ function DegreePlanPage() {
                   </div>
                 </div>
                 <ul className="mt-2 space-y-1 text-sm text-gray-800">
-                  {term.course_codes.map((code) => (
-                    <li key={code}>{code}</li>
-                  ))}
+                  {term.course_codes.map((code) => {
+                    const course = courseByCode[code];
+                    const label = course ? `${code} – ${course.name}` : code;
+                    return <li key={code}>{label}</li>;
+                  })}
                 </ul>
                 <button
                   type="button"
@@ -556,26 +685,53 @@ function DegreePlanPage() {
                   disabled={loadingTermId === term.term_id || term.course_codes.length === 0}
                   className="mt-3 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white disabled:bg-blue-300"
                 >
-                  {loadingTermId === term.term_id ? "Building timetable" : "Generate timetable"}
+                  {loadingTermId === term.term_id ? "Building timetables" : "Generate timetables"}
                 </button>
               </div>
             ))}
           </div>
           {timetableMutation.isError && (
             <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-800">
-              Failed to build timetable. Check backend logs.
+              Failed to build timetables. Check backend logs.
             </div>
           )}
-          {latestTimetableTermId && latestTimetableSections.length > 0 && (
+          {latestTimetableTermId && timetableOptions.length > 0 && (
             <div className="rounded-lg border bg-white p-4">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm font-semibold text-gray-900">
-                  Timetable for {latestTimetableTermId}
+                  Timetables for {latestTimetableTermId}
                 </div>
                 <div className="text-xs text-gray-600">
                   Time window: {formatTimeLabel(earliestTimeMinutes)} to {formatTimeLabel(latestTimeMinutes)}
                 </div>
               </div>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                {timetableOptions.map((option, index) => {
+                  const isActive = selectedTimetableIndex === index;
+                  const penalty = option.objective.total_penalty;
+                  const label = penalty === null ? `Option ${index + 1}` : `Option ${index + 1} (penalty ${penalty})`;
+                  return (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => setSelectedTimetableIndex(index)}
+                      className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                        isActive ? "border-blue-600 bg-blue-50 text-blue-700" : "border-gray-300 text-gray-700 hover:bg-gray-50"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {selectedTimetableIndex !== null && (
+                <div className="mb-3 text-xs text-gray-700">
+                  Viewing option {selectedTimetableIndex + 1} of {timetableOptions.length}
+                  {activePenalty !== null ? (
+                    <span className="ml-2">Penalty: <span className="font-medium">{activePenalty}</span></span>
+                  ) : null}
+                </div>
+              )}
               <div className="grid gap-4 md:grid-cols-5">
                 {days.map((day) => (
                   <div key={day} className="border-t pt-2 text-sm">
@@ -586,32 +742,38 @@ function DegreePlanPage() {
                       <div className="text-xs text-gray-400">No classes</div>
                     )}
                     <div className="space-y-2">
-                      {sectionsByDay[day].map((section) => (
-                        <div
-                          key={section.section_id}
-                          className="rounded-md border bg-blue-50 px-2 py-1 text-xs text-blue-900"
-                        >
-                          <div className="font-semibold">
-                            {section.course_code}
+                      {sectionsByDay[day].map((section) => {
+                        const course = courseByCode[section.course_code];
+                        const label = course
+                          ? `${section.course_code} – ${course.name}`
+                          : section.course_code;
+                        return (
+                          <div
+                            key={section.section_id}
+                            className="rounded-md border bg-blue-50 px-2 py-1 text-xs text-blue-900"
+                          >
+                            <div className="font-semibold">
+                              {label}
+                            </div>
+                            <div>
+                              {formatTimeLabel(section.start_time_minutes)}{" "}
+                              to {formatTimeLabel(section.end_time_minutes)}
+                            </div>
+                            <div className="uppercase">
+                              {section.kind}
+                            </div>
                           </div>
-                          <div>
-                            {formatTimeLabel(section.start_time_minutes)}{" "}
-                            to {formatTimeLabel(section.end_time_minutes)}
-                          </div>
-                          <div className="uppercase">
-                            {section.kind}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
           )}
-          {latestTimetableTermId && latestTimetableSections.length === 0 && (
+          {latestTimetableTermId && timetableOptions.length === 0 && (
             <div className="rounded-lg border bg-gray-50 p-4 text-sm text-gray-700">
-              No sections could be scheduled for {latestTimetableTermId}.
+              No timetables could be generated for {latestTimetableTermId}.
             </div>
           )}
         </div>
