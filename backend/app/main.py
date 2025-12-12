@@ -2,6 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.api.routes.programs import router as programs_router
+from app.api.routes.courses import router as courses_router
+import app.models  # noqa: F401
 
 
 def create_application() -> FastAPI:
@@ -20,6 +23,9 @@ def create_application() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    application.include_router(programs_router)
+    application.include_router(courses_router)
 
     @application.get("/health")
     async def health_check() -> dict:
